@@ -47,9 +47,13 @@ extern "C" {
 #define EXPECTED_KGD_ID           0x5D
 #define EXPECTED_KGD_ID_ALT       0x50
 
+#define OCTOSPI1_MEM_BASE         0x90000000UL
+
 /* Exported function prototypes ---------------------------------------------*/
 int Test_PSRAM_Connection(void);
 int Test_PSRAM_QuadMode(void);
+int Test_PSRAM_MemoryMapped(void);
+int Test_PSRAM_Speed(uint32_t *writeSpeedKBps, uint32_t *readSpeedKBps);
 
 #ifdef __cplusplus
 }
