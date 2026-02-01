@@ -43,16 +43,19 @@
 
 XSPI_HandleTypeDef hospi1;
 
+/* USER CODE BEGIN PV */
 #define APS6404_READ_ID_CMD       0x9F
 #define APS6404_RESET_EN_CMD      0x66
 #define APS6404_RESET_CMD         0x99
-#define APS6404_ID_DUMMY_CYCLES   0   // clocks inserted before device drives data
-#define APS6404_ID_TOTAL_BYTES    10   // includes dummy bytes returned by the device
-#define APS6404_ID_DATA_BYTE0     0    // offset in stream where MFID appears
+#define APS6404_ID_DUMMY_CYCLES   0
+#define APS6404_ID_TOTAL_BYTES    10
+#define APS6404_ID_DATA_BYTE0     0
 #define APS6404_KGD_DATA_BYTE0    1
-
-/* USER CODE BEGIN PV */
-
+#define APS6404_ENTER_QUAD_CMD    0x35
+#define APS6404_EXIT_QUAD_CMD     0xF5
+#define APS6404_QUAD_WRITE_CMD    0x38
+#define APS6404_QUAD_READ_CMD     0xEB
+#define APS6404_QUAD_DUMMY_CYCLES 6
 
 /* USER CODE END PV */
 
@@ -126,35 +129,36 @@ int Test_PSRAM_Connection(void)
   if (status != HAL_OK) return -3;
 
   cmd.AddressMode = HAL_XSPI_ADDRESS_NONE;
+  cmd.DataMode    = HAL_XSPI_DATA_NONE;
+  cmd.DataLength  = 0;
   cmd.DummyCycles = 0;
-
 
   if (idBytes[APS6404_ID_DATA_BYTE0] != EXPECTED_MANUFACTURER_ID)
   {
     return -4; // Wrong MF ID
   }
 
-    if (!((idBytes[APS6404_KGD_DATA_BYTE0] == EXPECTED_KGD_ID) ||
-      (idBytes[APS6404_KGD_DATA_BYTE0] == EXPECTED_KGD_ID_ALT)))
+  if (!((idBytes[APS6404_KGD_DATA_BYTE0] == EXPECTED_KGD_ID) ||
+        (idBytes[APS6404_KGD_DATA_BYTE0] == EXPECTED_KGD_ID_ALT)))
   {
     return -4; // Wrong KGD
   }
 
   // --- Step 3: 0x02 single-write followed by 0x03 single-read ---
-  cmd.AddressMode   = HAL_XSPI_ADDRESS_1_LINE;
-  cmd.AddressWidth  = HAL_XSPI_ADDRESS_24_BITS;
-  cmd.Address       = 0x000000;
-  cmd.DataMode      = HAL_XSPI_DATA_1_LINE;
-  cmd.DataLength    = 1;
+  cmd.Instruction = 0x02;
+  cmd.AddressMode = HAL_XSPI_ADDRESS_1_LINE;
+  cmd.Address     = 0x000000;
+  cmd.DataMode    = HAL_XSPI_DATA_1_LINE;
+  cmd.DataLength  = 1;
 
-  cmd.Instruction   = 0x02; // write
   status = HAL_XSPI_Command(&hospi1, &cmd, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
   if (status != HAL_OK) return -5;
 
   status = HAL_XSPI_Transmit(&hospi1, &testPattern, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
   if (status != HAL_OK) return -6;
 
-  cmd.Instruction = 0x03; // read
+  cmd.Instruction = 0x03;
+
   status = HAL_XSPI_Command(&hospi1, &cmd, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
   if (status != HAL_OK) return -7;
 
@@ -165,6 +169,91 @@ int Test_PSRAM_Connection(void)
 
   return 1; // success
 }
+
+// First verify WRITE worked using single-line READ
+int Test_PSRAM_QuadMode(void)
+{
+  XSPI_RegularCmdTypeDef cmd = {0};
+  HAL_StatusTypeDef status;
+
+  #define TEST_SIZE 256
+  uint8_t testBuffer[TEST_SIZE];
+  uint8_t readBuffer[TEST_SIZE];
+  uint32_t testAddress = 0x000000;
+
+  // Fill test pattern
+  for (int i = 0; i < TEST_SIZE; i++) {
+    testBuffer[i] = (uint8_t)i;
+  }
+  memset(readBuffer, 0, TEST_SIZE);
+
+  // Common baseline
+  cmd.OperationType      = HAL_XSPI_OPTYPE_COMMON_CFG;
+  cmd.IOSelect           = HAL_XSPI_SELECT_IO_3_0;
+  cmd.InstructionMode    = HAL_XSPI_INSTRUCTION_1_LINE;
+  cmd.InstructionWidth   = HAL_XSPI_INSTRUCTION_8_BITS;
+  cmd.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_DISABLE;
+  cmd.AddressMode        = HAL_XSPI_ADDRESS_NONE;
+  cmd.AddressWidth       = HAL_XSPI_ADDRESS_24_BITS;
+  cmd.AddressDTRMode     = HAL_XSPI_ADDRESS_DTR_DISABLE;
+  cmd.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+  cmd.DataMode           = HAL_XSPI_DATA_NONE;
+  cmd.DataDTRMode        = HAL_XSPI_DATA_DTR_DISABLE;
+  cmd.DummyCycles        = 0;
+  cmd.DQSMode            = HAL_XSPI_DQS_DISABLE;
+  cmd.SIOOMode           = HAL_XSPI_SIOO_INST_EVERY_CMD;
+
+  // --- Reset ---
+  cmd.Instruction = 0x66;
+  status = HAL_XSPI_Command(&hospi1, &cmd, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+  if (status != HAL_OK) return -1;
+
+  cmd.Instruction = 0x99;
+  status = HAL_XSPI_Command(&hospi1, &cmd, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+  if (status != HAL_OK) return -2;
+
+  HAL_Delay(2);
+
+  // --- QUAD WRITE (0x38): 1-1-4 mode ---
+  cmd.Instruction = 0x38;
+  cmd.AddressMode = HAL_XSPI_ADDRESS_1_LINE;   // *** 1-line address ***
+  cmd.Address     = testAddress;
+  cmd.DataMode    = HAL_XSPI_DATA_4_LINES;     // 4-line data
+  cmd.DataLength  = TEST_SIZE;
+  cmd.DummyCycles = 0;
+
+  status = HAL_XSPI_Command(&hospi1, &cmd, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+  if (status != HAL_OK) return -3;
+
+  status = HAL_XSPI_Transmit(&hospi1, testBuffer, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+  if (status != HAL_OK) return -4;
+
+  HAL_Delay(1);
+
+  // --- QUAD READ (0xEB): 1-1-4 mode ---
+  cmd.Instruction = 0xEB;
+  cmd.AddressMode = HAL_XSPI_ADDRESS_1_LINE;   // *** 1-line address ***
+  cmd.Address     = testAddress;
+  cmd.DataMode    = HAL_XSPI_DATA_4_LINES;     // 4-line data
+  cmd.DataLength  = TEST_SIZE;
+  cmd.DummyCycles = 6;
+
+  status = HAL_XSPI_Command(&hospi1, &cmd, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+  if (status != HAL_OK) return -5;
+
+  status = HAL_XSPI_Receive(&hospi1, readBuffer, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+  if (status != HAL_OK) return -6;
+
+  // --- Verify ---
+  for (int i = 0; i < TEST_SIZE; i++) {
+    if (readBuffer[i] != testBuffer[i]) {
+      return -(100 + i);
+    }
+  }
+
+  return 1;  // SUCCESS
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -209,17 +298,15 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	int result = Test_PSRAM_Connection();
+    //int result = Test_PSRAM_Connection();
 
-	  if (result == 1) {
-		  // SUCCESS: Setup is correct!
-		  // Proceed to Memory Mapping (CSP_OSPI_Init from previous answer)
-	  } else {
-		  // FAILURE: Check result code
-		  // -4 = Chip connected but returned wrong ID (Check pData)
-		  // -2/-3 = Timeouts (Check Clock/NCS pin)
-	  }
-	  HAL_Delay(250);
+    ////if (result == 1)
+    //{
+    int quadResult = Test_PSRAM_QuadMode();
+    //}
+
+    (void)quadResult;
+    HAL_Delay(250);
   }
   /* USER CODE END 3 */
 }
@@ -357,6 +444,7 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */

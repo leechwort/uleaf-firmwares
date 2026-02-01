@@ -102,13 +102,30 @@ void HAL_XSPI_MspInit(XSPI_HandleTypeDef* hxspi)
     /* Peripheral clock enable */
     __HAL_RCC_OSPI1_CLK_ENABLE();
 
+    __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     /**OCTOSPI1 GPIO Configuration
+    PA6     ------> OCTOSPI1_IO3
+    PA7     ------> OCTOSPI1_IO2
     PB0     ------> OCTOSPI1_IO1
     PB1     ------> OCTOSPI1_IO0
     PB2     ------> OCTOSPI1_CLK
     PB6     ------> OCTOSPI1_NCS
     */
+    GPIO_InitStruct.Pin = GPIO_PIN_6;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF6_OCTOSPI1;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF10_OCTOSPI1;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
     GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -155,11 +172,15 @@ void HAL_XSPI_MspDeInit(XSPI_HandleTypeDef* hxspi)
     __HAL_RCC_OSPI1_CLK_DISABLE();
 
     /**OCTOSPI1 GPIO Configuration
+    PA6     ------> OCTOSPI1_IO3
+    PA7     ------> OCTOSPI1_IO2
     PB0     ------> OCTOSPI1_IO1
     PB1     ------> OCTOSPI1_IO0
     PB2     ------> OCTOSPI1_CLK
     PB6     ------> OCTOSPI1_NCS
     */
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_6|GPIO_PIN_7);
+
     HAL_GPIO_DeInit(GPIOB, GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_6);
 
     /* USER CODE BEGIN OCTOSPI1_MspDeInit 1 */
