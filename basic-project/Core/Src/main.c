@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "utils.h"
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,6 +43,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 I2S_HandleTypeDef hi2s1;
+DMA_HandleTypeDef handle_GPDMA1_Channel5;
 
 XSPI_HandleTypeDef hospi1;
 
@@ -49,21 +51,53 @@ SPI_HandleTypeDef hspi2;
 
 /* USER CODE BEGIN PV */
 
+// Global stereo audio buffer for I2S
+// Buffer sized for lowest frequency (20Hz) at 96kHz sample rate
+// 96000Hz / 20Hz = 4800 samples per period (enough for any audible frequency)
+#define SAMPLE_RATE 96000
+#define MIN_FREQUENCY 20.0f  // Lowest frequency we want to support
+#define MAX_MONO_SAMPLES 4800  // 96000 / 20
+#define MAX_STEREO_SAMPLES 9600  // 4800 * 2
+uint16_t stereo_buffer[MAX_STEREO_SAMPLES];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_GPDMA1_Init(void);
 static void MX_ICACHE_Init(void);
 static void MX_OCTOSPI1_Init(void);
-static void MX_SPI2_Init(void);
 static void MX_I2S1_Init(void);
+static void MX_SPI2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// Counter to verify DMA callback is being called
+volatile uint32_t i2s_dma_callback_count = 0;
+
+// Store the actual buffer size being used (calculated in main)
+volatile uint32_t active_buffer_size = 0;
+
+// I2S DMA TX complete callback - called when DMA transfer completes
+// Restart DMA transmission for continuous playback
+void I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
+{
+  i2s_dma_callback_count++;
+  
+  // Check if I2S is ready before restarting
+  if (hi2s->State == HAL_I2S_STATE_READY) {
+    HAL_I2S_Transmit_DMA(hi2s, stereo_buffer, active_buffer_size);
+  } else {
+    // Force state to ready if stuck
+    hi2s->State = HAL_I2S_STATE_READY;
+    HAL_I2S_Transmit_DMA(hi2s, stereo_buffer, active_buffer_size);
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -96,70 +130,84 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_GPDMA1_Init();
   MX_ICACHE_Init();
   MX_OCTOSPI1_Init();
-  MX_SPI2_Init();
   MX_I2S1_Init();
+  MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
 
-  // Initialize PSRAM in memory-mapped mode
-  int psramInit = PSRAM_MemoryMapped_Init();
-  if (psramInit != 1) {
+  // Test PSRAM connection at startup
+  int psram_result = Test_PSRAM_Connection();
+  if (psram_result < 0) {
+    // PSRAM test failed - you can add error handling here
+    // Error codes: -1=reset fail, -2=id cmd fail, -3=id read fail, -4=wrong id, -5=write fail, -6=read fail, -7=data mismatch
     Error_Handler();
   }
 
-  // Define large array in PSRAM at 0x90000000
-  #define PSRAM_ARRAY_SIZE 4096
-  volatile uint32_t *psramArray = (uint32_t *)OCTOSPI1_MEM_BASE;
+  // *** CHANGE FREQUENCY HERE ***
+  const float frequency = 300.0f;  // Try: 440.0f (A4), 220.0f (A3), 65.0f (C2), etc.
+  // *****************************
+  
+  // *** CHANGE AMPLITUDE HERE (0.0 to 1.0) ***
+  const float amplitude = 0.25f;  // 0.1 = 10% volume, 1.0 = 100% volume
+  // ******************************************
+  
+  const float sample_rate = (float)SAMPLE_RATE;
+  
+  // Calculate number of samples needed for one complete period of this frequency
+  const uint32_t samples_per_period = (uint32_t)(sample_rate / frequency);
+  
+  // Generate one complete sawtooth wave period
+  // Sawtooth wave: linear ramp from -1.0 to +1.0
 
-  const uint16_t triangle_wave[]  = {
-  0x400,0x800,0xc00,0x1000,0x1400,0x1800,0x1c00,0x2000,
-  0x2400,0x2800,0x2c00,0x3000,0x3400,0x3800,0x3c00,0x4000,
-  0x4400,0x4800,0x4c00,0x5000,0x5400,0x5800,0x5c00,0x6000,
-  0x6400,0x6800,0x6c00,0x7000,0x7400,0x7800,0x7c00,0x8000,
-  0x83ff,0x87ff,0x8bff,0x8fff,0x93ff,0x97ff,0x9bff,0x9fff,
-  0xa3ff,0xa7ff,0xabff,0xafff,0xb3ff,0xb7ff,0xbbff,0xbfff,
-  0xc3ff,0xc7ff,0xcbff,0xcfff,0xd3ff,0xd7ff,0xdbff,0xdfff,
-  0xe3ff,0xe7ff,0xebff,0xefff,0xf3ff,0xf7ff,0xfbff,0xffff,
-  0xfbff,0xf7ff,0xf3ff,0xefff,0xebff,0xe7ff,0xe3ff,0xdfff,
-  0xdbff,0xd7ff,0xd3ff,0xcfff,0xcbff,0xc7ff,0xc3ff,0xbfff,
-  0xbbff,0xb7ff,0xb3ff,0xafff,0xabff,0xa7ff,0xa3ff,0x9fff,
-  0x9bff,0x97ff,0x93ff,0x8fff,0x8bff,0x87ff,0x83ff,0x8000,
-  0x7c00,0x7800,0x7400,0x7000,0x6c00,0x6800,0x6400,0x6000,
-  0x5c00,0x5800,0x5400,0x5000,0x4c00,0x4800,0x4400,0x4000,
-  0x3c00,0x3800,0x3400,0x3000,0x2c00,0x2800,0x2400,0x2000,
-  0x1c00,0x1800,0x1400,0x1000,0xc00,0x800,0x400,0x0,
-  };
+
+  for (uint32_t i = 0; i < samples_per_period; i++) {
+    float phase = (float)i / (float)samples_per_period;  // 0.0 to 1.0
+    
+    // Sawtooth: linear rise from -1.0 to +1.0
+    float sawtooth_value = -1.0f + 2.0f * phase;
+    
+    // Apply amplitude scaling and convert to signed 16-bit
+    int16_t sample = (int16_t)(sawtooth_value * amplitude * 32767.0f);
+    
+    // Fill stereo buffer (duplicate for L/R channels)
+    stereo_buffer[i * 2] = (uint16_t)sample;
+    stereo_buffer[i * 2 + 1] = (uint16_t)sample;
+  }
+  // Calculate actual stereo buffer size to transmit
+  const uint32_t stereo_buffer_size = samples_per_period * 2;
+  
+  // Store for use in callback
+  active_buffer_size = stereo_buffer_size;
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  
+  // Unmute PCM5102A
   HAL_GPIO_WritePin(AUDIO_MUTE_CONTROL_GPIO_Port, AUDIO_MUTE_CONTROL_Pin, GPIO_PIN_SET);
+  HAL_Delay(10);
+  
+  // Register I2S TX complete callback
+  HAL_I2S_RegisterCallback(&hi2s1, HAL_I2S_TX_COMPLETE_CB_ID, I2S_TxCpltCallback);
+  
+  // Start I2S transmission in DMA circular mode
+  HAL_StatusTypeDef i2s_status = HAL_I2S_Transmit_DMA(&hi2s1, stereo_buffer, stereo_buffer_size);
+  if (i2s_status != HAL_OK) {
+    Error_Handler();
+  }
+  
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-#if 0
-	// Test external flash memory
-	int result = Test_W25Q64_Flash();
-	(void)result;
-    // Example: Write data to PSRAM array
-    for (uint32_t i = 0; i < PSRAM_ARRAY_SIZE; i++) {HAL_I2S_Transmit(&hi2s2, triangle_wave, sizeof(triangle_wave)/sizeof(triangle_wave[0]), 1000);
-      psramArray[i] = i * 2;
-    }
-
-    // Example: Read and verify data from PSRAM array
-    uint32_t sum = 0;
-    for (uint32_t i = 0; i < PSRAM_ARRAY_SIZE; i++) {
-      sum += psramArray[i];
-    }
-
-    (void)sum;  // Use sum to prevent optimization
-    HAL_Delay(250);
-#endif
-    HAL_I2S_Transmit(&hi2s1, triangle_wave, sizeof(triangle_wave)/sizeof(triangle_wave[0]), 1000);
+    
+    // DMA is handling audio transmission in background
+    // Check i2s_dma_callback_count in debugger - should increment continuously
+    HAL_Delay(1000);
   }
   /* USER CODE END 3 */
 }
@@ -222,6 +270,34 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief GPDMA1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPDMA1_Init(void)
+{
+
+  /* USER CODE BEGIN GPDMA1_Init 0 */
+
+  /* USER CODE END GPDMA1_Init 0 */
+
+  /* Peripheral clock enable */
+  __HAL_RCC_GPDMA1_CLK_ENABLE();
+
+  /* GPDMA1 interrupt Init */
+    HAL_NVIC_SetPriority(GPDMA1_Channel5_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(GPDMA1_Channel5_IRQn);
+
+  /* USER CODE BEGIN GPDMA1_Init 1 */
+
+  /* USER CODE END GPDMA1_Init 1 */
+  /* USER CODE BEGIN GPDMA1_Init 2 */
+
+  /* USER CODE END GPDMA1_Init 2 */
+
+}
+
+/**
   * @brief I2S1 Initialization Function
   * @param None
   * @retval None
@@ -239,13 +315,13 @@ static void MX_I2S1_Init(void)
   hi2s1.Instance = SPI1;
   hi2s1.Init.Mode = I2S_MODE_MASTER_TX;
   hi2s1.Init.Standard = I2S_STANDARD_PHILIPS;
-  hi2s1.Init.DataFormat = I2S_DATAFORMAT_16B_EXTENDED;
+  hi2s1.Init.DataFormat = I2S_DATAFORMAT_16B;
   hi2s1.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
   hi2s1.Init.AudioFreq = I2S_AUDIOFREQ_96K;
   hi2s1.Init.CPOL = I2S_CPOL_LOW;
   hi2s1.Init.FirstBit = I2S_FIRSTBIT_MSB;
   hi2s1.Init.WSInversion = I2S_WS_INVERSION_DISABLE;
-  hi2s1.Init.Data24BitAlignment = I2S_DATA_24BIT_ALIGNMENT_LEFT;
+  hi2s1.Init.Data24BitAlignment = I2S_DATA_24BIT_ALIGNMENT_RIGHT;
   hi2s1.Init.MasterKeepIOState = I2S_MASTER_KEEP_IO_STATE_DISABLE;
   if (HAL_I2S_Init(&hi2s1) != HAL_OK)
   {

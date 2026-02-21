@@ -211,7 +211,7 @@
 #define  USE_HAL_HASH_REGISTER_CALLBACKS      0U    /* HASH register callback disabled      */
 #define  USE_HAL_HCD_REGISTER_CALLBACKS       0U    /* HCD register callback disabled       */
 #define  USE_HAL_I2C_REGISTER_CALLBACKS       0U    /* I2C register callback disabled       */
-#define  USE_HAL_I2S_REGISTER_CALLBACKS       0U    /* I2S register callback disabled       */
+#define  USE_HAL_I2S_REGISTER_CALLBACKS       1U    /* I2S register callback enabled       */
 #define  USE_HAL_I3C_REGISTER_CALLBACKS       0U    /* I3C register callback disabled       */
 #define  USE_HAL_IRDA_REGISTER_CALLBACKS      0U    /* IRDA register callback disabled      */
 #define  USE_HAL_IWDG_REGISTER_CALLBACKS      0U    /* IWDG register callback disabled      */
