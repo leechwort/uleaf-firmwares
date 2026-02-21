@@ -55,6 +55,8 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
+extern DMA_NodeTypeDef Node_GPDMA1_Channel5;
+extern DMA_QListTypeDef List_GPDMA1_Channel5;
 extern DMA_HandleTypeDef handle_GPDMA1_Channel5;
 extern I2S_HandleTypeDef hi2s1;
 /* USER CODE BEGIN EV */

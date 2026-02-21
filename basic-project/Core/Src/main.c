@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "utils.h"
+#include "leaf.h"
 #include <math.h>
 /* USER CODE END Includes */
 
@@ -43,6 +44,8 @@
 /* Private variables ---------------------------------------------------------*/
 
 I2S_HandleTypeDef hi2s1;
+DMA_NodeTypeDef Node_GPDMA1_Channel5;
+DMA_QListTypeDef List_GPDMA1_Channel5;
 DMA_HandleTypeDef handle_GPDMA1_Channel5;
 
 XSPI_HandleTypeDef hospi1;
@@ -51,19 +54,36 @@ SPI_HandleTypeDef hspi2;
 
 /* USER CODE BEGIN PV */
 
-// Global stereo audio buffer for I2S
-// Buffer sized for lowest frequency (20Hz) at 96kHz sample rate
-// 96000Hz / 20Hz = 4800 samples per period (enough for any audible frequency)
-#define SAMPLE_RATE 96000
-#define MIN_FREQUENCY 20.0f  // Lowest frequency we want to support
-#define MAX_MONO_SAMPLES 4800  // 96000 / 20
-#define MAX_STEREO_SAMPLES 9600  // 4800 * 2
-uint16_t stereo_buffer[MAX_STEREO_SAMPLES];
+// LEAF Constants
+#define SAMPLERATE 44000
+#define LEAF_BUFFER_SIZE (2 * 44000)
+#define DMA_BUFFER_SIZE 8192  // Total DMA buffer size (must be even)
+
+// LEAF Memory pool
+char mempool[10000];
+
+// Double buffer for DMA - stereo 16-bit samples
+uint16_t dma_buffer[DMA_BUFFER_SIZE] = {0};
+
+// Buffer management for double-buffering
+volatile uint16_t *current_write_ptr = dma_buffer;
+volatile size_t current_sample_count = 0;
+volatile uint32_t buffer_overrun_count = 0;
+volatile uint8_t need_samples = 0;  // Flag: 0=none, 1=fill first half, 2=fill second half
+volatile uint32_t half_complete_count = 0;  // Increments on half-complete callback
+volatile uint32_t full_complete_count = 0;  // Increments on full-complete callback
+volatile uint32_t buffers_filled_count = 0; // Increments each time we fill a buffer half
+
+// LEAF objects (use pointers because LEAF init functions take double pointers)
+LEAF leaf;
+tCycle* cycle;
+tHermiteDelay* delay;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void PeriphCommonClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_GPDMA1_Init(void);
 static void MX_ICACHE_Init(void);
@@ -77,25 +97,39 @@ static void MX_SPI2_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-// Counter to verify DMA callback is being called
-volatile uint32_t i2s_dma_callback_count = 0;
+// Random number generator for LEAF
+float rnd_func()
+{
+    return ((float)rand() / (float)(RAND_MAX));
+}
 
-// Store the actual buffer size being used (calculated in main)
-volatile uint32_t active_buffer_size = 0;
+// DMA Half Transfer Complete Callback - first half sent, fill it
+void I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
+{
+  half_complete_count++;  // Debug counter
+  // DMA is now playing second half, we need to fill first half
+  if (need_samples == 0)
+  {
+    need_samples = 1;  // Request first half fill
+  }
+  else
+  {
+    buffer_overrun_count++;  // Previous fill not complete
+  }
+}
 
-// I2S DMA TX complete callback - called when DMA transfer completes
-// Restart DMA transmission for continuous playback
+// DMA Transfer Complete Callback - second half sent, fill it
 void I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
 {
-  i2s_dma_callback_count++;
-  
-  // Check if I2S is ready before restarting
-  if (hi2s->State == HAL_I2S_STATE_READY) {
-    HAL_I2S_Transmit_DMA(hi2s, stereo_buffer, active_buffer_size);
-  } else {
-    // Force state to ready if stuck
-    hi2s->State = HAL_I2S_STATE_READY;
-    HAL_I2S_Transmit_DMA(hi2s, stereo_buffer, active_buffer_size);
+  full_complete_count++;  // Debug counter
+  // DMA is now playing first half, we need to fill second half
+  if (need_samples == 0)
+  {
+    need_samples = 2;  // Request second half fill
+  }
+  else
+  {
+    buffer_overrun_count++;  // Previous fill not complete
   }
 }
 
@@ -124,6 +158,9 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
+  /* Configure the peripherals common clocks */
+  PeriphCommonClock_Config();
+
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
@@ -145,41 +182,17 @@ int main(void)
     Error_Handler();
   }
 
-  // *** CHANGE FREQUENCY HERE ***
-  const float frequency = 300.0f;  // Try: 440.0f (A4), 220.0f (A3), 65.0f (C2), etc.
-  // *****************************
+  // Initialize LEAF audio library
+  LEAF_init(&leaf, SAMPLERATE, mempool, LEAF_BUFFER_SIZE, &rnd_func);
   
-  // *** CHANGE AMPLITUDE HERE (0.0 to 1.0) ***
-  const float amplitude = 0.25f;  // 0.1 = 10% volume, 1.0 = 100% volume
-  // ******************************************
+  // Initialize a sine oscillator (tCycle) - Note: LEAF uses double pointers for init
+  tCycle_init(&cycle, &leaf);
+  tCycle_setFreq(cycle, 220.0f);  // 220Hz = A3 note
   
-  const float sample_rate = (float)SAMPLE_RATE;
-  
-  // Calculate number of samples needed for one complete period of this frequency
-  const uint32_t samples_per_period = (uint32_t)(sample_rate / frequency);
-  
-  // Generate one complete sawtooth wave period
-  // Sawtooth wave: linear ramp from -1.0 to +1.0
-
-
-  for (uint32_t i = 0; i < samples_per_period; i++) {
-    float phase = (float)i / (float)samples_per_period;  // 0.0 to 1.0
-    
-    // Sawtooth: linear rise from -1.0 to +1.0
-    float sawtooth_value = -1.0f + 2.0f * phase;
-    
-    // Apply amplitude scaling and convert to signed 16-bit
-    int16_t sample = (int16_t)(sawtooth_value * amplitude * 32767.0f);
-    
-    // Fill stereo buffer (duplicate for L/R channels)
-    stereo_buffer[i * 2] = (uint16_t)sample;
-    stereo_buffer[i * 2 + 1] = (uint16_t)sample;
-  }
-  // Calculate actual stereo buffer size to transmit
-  const uint32_t stereo_buffer_size = samples_per_period * 2;
-  
-  // Store for use in callback
-  active_buffer_size = stereo_buffer_size;
+  // Initialize a delay effect (optional)
+  tHermiteDelay_init(&delay, 2000, 2500, &leaf);
+  tHermiteDelay_setDelay(delay, 2000.0f);  // 2000 samples delay
+  tHermiteDelay_setGain(delay, 0.5f);      // 50% wet/dry mix
 
   /* USER CODE END 2 */
 
@@ -190,14 +203,26 @@ int main(void)
   HAL_GPIO_WritePin(AUDIO_MUTE_CONTROL_GPIO_Port, AUDIO_MUTE_CONTROL_Pin, GPIO_PIN_SET);
   HAL_Delay(10);
   
-  // Register I2S TX complete callback
+  // Register both I2S callbacks for double-buffering
   HAL_I2S_RegisterCallback(&hi2s1, HAL_I2S_TX_COMPLETE_CB_ID, I2S_TxCpltCallback);
+  HAL_I2S_RegisterCallback(&hi2s1, HAL_I2S_TX_HALF_COMPLETE_CB_ID, I2S_TxHalfCpltCallback);
   
-  // Start I2S transmission in DMA circular mode
-  HAL_StatusTypeDef i2s_status = HAL_I2S_Transmit_DMA(&hi2s1, stereo_buffer, stereo_buffer_size);
+  // Pre-fill ENTIRE buffer before starting DMA
+  for (uint32_t i = 0; i < DMA_BUFFER_SIZE / 2; i++)
+  {
+    float sample = tCycle_tick(cycle);
+    int16_t sample_int = (int16_t)(sample * 32767.0f * 0.25f);
+    dma_buffer[i * 2] = sample_int;
+    dma_buffer[i * 2 + 1] = sample_int;
+  }
+  
+  // Start I2S DMA transmission with pre-filled buffer
+  HAL_StatusTypeDef i2s_status = HAL_I2S_Transmit_DMA(&hi2s1, dma_buffer, DMA_BUFFER_SIZE);
   if (i2s_status != HAL_OK) {
     Error_Handler();
   }
+  
+  uint32_t counter = 0;
   
   while (1)
   {
@@ -205,9 +230,42 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     
-    // DMA is handling audio transmission in background
-    // Check i2s_dma_callback_count in debugger - should increment continuously
-    HAL_Delay(1000);
+    // Check if a buffer half needs filling
+    if (need_samples != 0)
+    {
+      uint8_t buffer_to_fill = need_samples;
+      need_samples = 0;  // Clear flag immediately
+      
+      // Set write pointer to appropriate buffer half
+      uint16_t* write_ptr;
+      if (buffer_to_fill == 1)
+      {
+        write_ptr = dma_buffer;  // Fill first half
+      }
+      else
+      {
+        write_ptr = dma_buffer + DMA_BUFFER_SIZE / 2;  // Fill second half
+      }
+      
+      // Generate samples for this half
+      // Each half = DMA_BUFFER_SIZE/2 = 4096 uint16_t values = 2048 stereo frames
+      uint32_t num_frames = DMA_BUFFER_SIZE / 4;  // 2048 stereo frames per half
+      
+      for (uint32_t frame = 0; frame < num_frames; frame++)
+      {
+        // Generate one mono sample from LEAF oscillator
+        float sample = tCycle_tick(cycle);
+        
+        // Convert to 16-bit signed integer
+        int16_t sample_int = (int16_t)(sample * 32767.0f * 0.25f);
+        
+        // Write stereo frame (duplicate mono to L/R)
+        write_ptr[frame * 2 + 0] = (uint16_t)sample_int;  // Left
+        write_ptr[frame * 2 + 1] = (uint16_t)sample_int;  // Right
+      }
+      
+      buffers_filled_count++;  // Debug counter - increment after filling
+    }
   }
   /* USER CODE END 3 */
 }
@@ -230,17 +288,19 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_CSI;
-  RCC_OscInitStruct.CSIState = RCC_CSI_ON;
-  RCC_OscInitStruct.CSICalibrationValue = RCC_CSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSIDiv = RCC_HSI_DIV2;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLL1_SOURCE_CSI;
-  RCC_OscInitStruct.PLL.PLLM = 1;
-  RCC_OscInitStruct.PLL.PLLN = 32;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLL1_SOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 2;
+  RCC_OscInitStruct.PLL.PLLN = 43;
   RCC_OscInitStruct.PLL.PLLP = 6;
-  RCC_OscInitStruct.PLL.PLLQ = 3;
+  RCC_OscInitStruct.PLL.PLLQ = 6;
   RCC_OscInitStruct.PLL.PLLR = 2;
-  RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1_VCIRANGE_2;
+  RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1_VCIRANGE_3;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1_VCORANGE_WIDE;
   RCC_OscInitStruct.PLL.PLLFRACN = 0;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -259,14 +319,32 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB3CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
   {
     Error_Handler();
   }
 
   /** Configure the programming delay
   */
-  __HAL_FLASH_SET_PROGRAM_DELAY(FLASH_PROGRAMMING_DELAY_0);
+  __HAL_FLASH_SET_PROGRAM_DELAY(FLASH_PROGRAMMING_DELAY_2);
+}
+
+/**
+  * @brief Peripherals Common Clock Configuration
+  * @retval None
+  */
+void PeriphCommonClock_Config(void)
+{
+  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+
+  /** Initializes the peripherals clock
+  */
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_CKPER;
+  PeriphClkInitStruct.CkperClockSelection = RCC_CLKPSOURCE_HSI;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
 }
 
 /**
@@ -317,7 +395,7 @@ static void MX_I2S1_Init(void)
   hi2s1.Init.Standard = I2S_STANDARD_PHILIPS;
   hi2s1.Init.DataFormat = I2S_DATAFORMAT_16B;
   hi2s1.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
-  hi2s1.Init.AudioFreq = I2S_AUDIOFREQ_96K;
+  hi2s1.Init.AudioFreq = I2S_AUDIOFREQ_44K;
   hi2s1.Init.CPOL = I2S_CPOL_LOW;
   hi2s1.Init.FirstBit = I2S_FIRSTBIT_MSB;
   hi2s1.Init.WSInversion = I2S_WS_INVERSION_DISABLE;
