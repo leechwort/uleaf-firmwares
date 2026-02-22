@@ -1,26 +1,44 @@
 #include "synth_core.h"
 #include "sequencer.h"
 #include "leaf.h"
+#include "utils.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "cmsis_os2.h"
 
 // ---------------------------------------------------------------------------
-// Circular delay line in SRAM
-// 500 ms at 44 kHz = 22 000 floats = 88 KB  (H533 has 640 KB SRAM total)
+// Circular delay line — select backend with DELAY_USE_PSRAM:
+//   0 = SRAM  (safe, always works, 88 KB of internal SRAM)
+//   1 = PSRAM (0 SRAM cost, needs PSRAM_MemoryMapped_Init() before Synth_Init())
 // ---------------------------------------------------------------------------
-#define DLY_SAMPLES   22000
+#define DELAY_USE_PSRAM  1            // <-- flip to 0 to fall back to SRAM
+
+#define DLY_SAMPLES   22000           // 500 ms @ 44 kHz
 #define DLY_FEEDBACK  0.60f
 #define DLY_MIX       0.55f
 
-static float    dly_buf[DLY_SAMPLES];  // ring buffer in SRAM (.bss)
+#if DELAY_USE_PSRAM
+  // PSRAM memory-mapped base — writable after PSRAM_MemoryMapped_Init()
+  static float * const dly_buf   = (float *)OCTOSPI1_MEM_BASE;
+#else
+  static float         dly_buf[DLY_SAMPLES];   // 88 KB in SRAM
+#endif
+
 static uint32_t dly_write = 0;
+
+// Clear the delay buffer (works for both SRAM and PSRAM)
+static void delay_clear(void)
+{
+    // Write zeros one word at a time — safe for both SRAM and PSRAM
+    for (uint32_t i = 0; i < DLY_SAMPLES; i++)
+        dly_buf[i] = 0.0f;
+    dly_write = 0;
+}
 
 static inline float delay_process(float in)
 {
-    // At the start of each call, dly_write points to the OLDEST sample
-    // (it was written DLY_SAMPLES iterations ago and hasn't been touched since)
+    // dly_write always points at the OLDEST slot in the ring buffer
     float out = dly_buf[dly_write];
     dly_buf[dly_write] = in + out * DLY_FEEDBACK;
     if (++dly_write >= DLY_SAMPLES)
@@ -125,8 +143,7 @@ void Synth_Init(void)
   tSVF_init(&filter, SVFTypeLowpass, 400.0f, 3.0f, &leaf);
 
   // Clear delay buffer
-  memset(dly_buf, 0, sizeof(dly_buf));
-  dly_write = 0;
+  delay_clear();
 
   // Unmute PCM5102A
   HAL_GPIO_WritePin(AUDIO_MUTE_CONTROL_GPIO_Port, AUDIO_MUTE_CONTROL_Pin, GPIO_PIN_SET);

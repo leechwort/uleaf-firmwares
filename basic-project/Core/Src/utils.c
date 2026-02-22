@@ -257,9 +257,10 @@ int Test_PSRAM_MemoryMapped(void)
   HAL_Delay(2);
 
   // --- Step 2: Configure memory-mapped QUAD READ (0xEB) ---
+  // APS6404: instruction on 1 line, address + data on 4 lines
   sCommand.OperationType = HAL_XSPI_OPTYPE_READ_CFG;
   sCommand.Instruction   = APS6404_QUAD_READ_CMD;  // 0xEB
-  sCommand.AddressMode   = HAL_XSPI_ADDRESS_1_LINE;
+  sCommand.AddressMode   = HAL_XSPI_ADDRESS_4_LINES;
   sCommand.DataMode      = HAL_XSPI_DATA_4_LINES;
   sCommand.DummyCycles   = APS6404_QUAD_DUMMY_CYCLES;
   sCommand.DQSMode       = HAL_XSPI_DQS_DISABLE;
@@ -268,9 +269,10 @@ int Test_PSRAM_MemoryMapped(void)
   if (status != HAL_OK) return -3;
 
   // --- Step 3: Configure memory-mapped QUAD WRITE (0x38) ---
+  // APS6404: instruction on 1 line, address + data on 4 lines, no dummy cycles
   sCommand.OperationType = HAL_XSPI_OPTYPE_WRITE_CFG;
   sCommand.Instruction   = APS6404_QUAD_WRITE_CMD; // 0x38
-  sCommand.AddressMode   = HAL_XSPI_ADDRESS_1_LINE;
+  sCommand.AddressMode   = HAL_XSPI_ADDRESS_4_LINES;
   sCommand.DataMode      = HAL_XSPI_DATA_4_LINES;
   sCommand.DummyCycles   = 0;
 
@@ -357,7 +359,7 @@ int Test_PSRAM_Speed(uint32_t *writeSpeedKBps, uint32_t *readSpeedKBps)
   // --- Step 2: Configure memory-mapped QUAD READ (0xEB) ---
   sCommand.OperationType = HAL_XSPI_OPTYPE_READ_CFG;
   sCommand.Instruction   = APS6404_QUAD_READ_CMD;  // 0xEB
-  sCommand.AddressMode   = HAL_XSPI_ADDRESS_1_LINE;
+  sCommand.AddressMode   = HAL_XSPI_ADDRESS_4_LINES;
   sCommand.DataMode      = HAL_XSPI_DATA_4_LINES;
   sCommand.DummyCycles   = APS6404_QUAD_DUMMY_CYCLES;
   sCommand.DQSMode       = HAL_XSPI_DQS_DISABLE;
@@ -368,7 +370,7 @@ int Test_PSRAM_Speed(uint32_t *writeSpeedKBps, uint32_t *readSpeedKBps)
   // --- Step 3: Configure memory-mapped QUAD WRITE (0x38) ---
   sCommand.OperationType = HAL_XSPI_OPTYPE_WRITE_CFG;
   sCommand.Instruction   = APS6404_QUAD_WRITE_CMD; // 0x38
-  sCommand.AddressMode   = HAL_XSPI_ADDRESS_1_LINE;
+  sCommand.AddressMode   = HAL_XSPI_ADDRESS_4_LINES;
   sCommand.DataMode      = HAL_XSPI_DATA_4_LINES;
   sCommand.DummyCycles   = 0;
 
@@ -459,9 +461,10 @@ int PSRAM_MemoryMapped_Init(void)
   HAL_Delay(2);
 
   // --- Step 2: Configure memory-mapped QUAD READ (0xEB) ---
+  // APS6404 quad read: instruction on 1 line, address on 4 lines, data on 4 lines
   sCommand.OperationType = HAL_XSPI_OPTYPE_READ_CFG;
   sCommand.Instruction   = APS6404_QUAD_READ_CMD;  // 0xEB
-  sCommand.AddressMode   = HAL_XSPI_ADDRESS_1_LINE;
+  sCommand.AddressMode   = HAL_XSPI_ADDRESS_4_LINES;
   sCommand.DataMode      = HAL_XSPI_DATA_4_LINES;
   sCommand.DummyCycles   = APS6404_QUAD_DUMMY_CYCLES;
   sCommand.DQSMode       = HAL_XSPI_DQS_DISABLE;
@@ -470,9 +473,10 @@ int PSRAM_MemoryMapped_Init(void)
   if (status != HAL_OK) return -3;
 
   // --- Step 3: Configure memory-mapped QUAD WRITE (0x38) ---
+  // APS6404 quad write: instruction on 1 line, address on 4 lines, data on 4 lines
   sCommand.OperationType = HAL_XSPI_OPTYPE_WRITE_CFG;
   sCommand.Instruction   = APS6404_QUAD_WRITE_CMD; // 0x38
-  sCommand.AddressMode   = HAL_XSPI_ADDRESS_1_LINE;
+  sCommand.AddressMode   = HAL_XSPI_ADDRESS_4_LINES;
   sCommand.DataMode      = HAL_XSPI_DATA_4_LINES;
   sCommand.DummyCycles   = 0;
 

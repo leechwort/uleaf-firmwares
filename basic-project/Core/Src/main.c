@@ -138,6 +138,12 @@ int main(void)
     Error_Handler();
   }
 
+  // Initialize PSRAM in memory-mapped mode.
+  // Required when DELAY_USE_PSRAM=1 in synth_core.c; harmless otherwise.
+  if (PSRAM_MemoryMapped_Init() != 1) {
+    Error_Handler();
+  }
+
   // Initialize LEAF audio library
   Synth_Init();
 
