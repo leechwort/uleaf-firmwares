@@ -2,6 +2,7 @@
 #include "sequencer.h"
 #include "effects.h"
 #include "leaf.h"
+#include "leaf-envelopes.h"
 #include "utils.h"
 #include <math.h>
 #include <stdlib.h>
@@ -24,20 +25,12 @@ LEAF leaf;
 static tPBTriangle *osc;
 static tTriLFO     *lfo;
 static tSVF        *filter;
+static tExpSmooth  *env;
 
 static float rnd_func(void)
 {
     return ((float)rand() / (float)RAND_MAX);
 }
-
-/* ---------------------------------------------------------------------------
- * Gate envelope smoother (~3 ms attack/release at 44 kHz)
- * synth_gate_target: 1.0 = on, 0.0 = off  (written by NoteEvent handler)
- * synth_gate_smooth: per-sample amplitude  (updated inside render loop)
- * --------------------------------------------------------------------------*/
-#define GATE_COEFF 0.0075f
-static volatile float synth_gate_target = 0.0f;
-static          float synth_gate_smooth  = 0.0f;
 
 /* ---------------------------------------------------------------------------
  * DMA double-buffer
@@ -91,6 +84,11 @@ void Synth_Init(void)
 
     tSVF_init(&filter, SVFTypeLowpass, 400.0f, 3.0f, &leaf);
 
+    /* Exponential gate smoother: factor ~0.007 ≈ 3 ms at 44 kHz
+     * tExpSmooth smooths from current value toward the destination each tick.
+     * Use tExpSmooth_setFactor() to change the attack/release speed. */
+    tExpSmooth_init(&env, 0.0f, 0.007f, &leaf);
+
     Effects_Init();
 
     HAL_GPIO_WritePin(AUDIO_MUTE_CONTROL_GPIO_Port, AUDIO_MUTE_CONTROL_Pin, GPIO_PIN_SET);
@@ -122,11 +120,11 @@ void Synth_Task(void *argument)
             if (evt.velocity > 0 && evt.frequency > 0.0f)
             {
                 tPBTriangle_setFreq(osc, evt.frequency);
-                synth_gate_target = 1.0f;
+                tExpSmooth_setDest(env, evt.velocity / 127.0f);
             }
             else
             {
-                synth_gate_target = 0.0f;
+                tExpSmooth_setDest(env, 0.0f);
             }
         }
 
@@ -141,16 +139,16 @@ void Synth_Task(void *argument)
 
             for (uint32_t f = 0; f < num_frames; f++)
             {
-                /* Gate envelope */
-                synth_gate_smooth += GATE_COEFF * (synth_gate_target - synth_gate_smooth);
+                /* Gate envelope – exponential smooth toward target amplitude */
+                float env_out = tExpSmooth_tick(env);
 
                 /* LFO → filter cutoff sweep (100–8000 Hz) */
                 float lfo_val = tTriLFO_tick(lfo);
                 float cutoff  = 4050.0f + lfo_val * 3950.0f;
                 tSVF_setFreq(filter, cutoff);
 
-                /* Oscillator → filter → effects */
-                float osc_out  = tPBTriangle_tick(osc) * synth_gate_smooth;
+                /* Oscillator → envelope → filter → effects */
+                float osc_out  = tPBTriangle_tick(osc) * env_out;
                 float filtered = tSVF_tickLP(filter, osc_out);
                 float sample   = Effects_Process(filtered);
 
