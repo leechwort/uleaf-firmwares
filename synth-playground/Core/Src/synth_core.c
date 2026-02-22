@@ -22,8 +22,8 @@
 static char mempool[LEAF_MEMPOOL_SIZE];
 LEAF leaf;
 
-static tPBTriangle *osc;
-static tTriLFO     *lfo;
+static tCycle  *osc;
+static tTriLFO *lfo;
 static tSVF        *filter;
 static tExpSmooth  *env;
 
@@ -76,8 +76,8 @@ void Synth_Init(void)
 {
     LEAF_init(&leaf, SAMPLERATE, mempool, LEAF_MEMPOOL_SIZE, &rnd_func);
 
-    tPBTriangle_init(&osc, &leaf);
-    tPBTriangle_setFreq(osc, 440.0f);
+    tCycle_init(&osc, &leaf);
+    tCycle_setFreq(osc, 440.0f);
 
     tTriLFO_init(&lfo, &leaf);
     tTriLFO_setFreq(lfo, 0.5f);
@@ -119,7 +119,7 @@ void Synth_Task(void *argument)
         {
             if (evt.velocity > 0 && evt.frequency > 0.0f)
             {
-                tPBTriangle_setFreq(osc, evt.frequency);
+                tCycle_setFreq(osc, evt.frequency);
                 tExpSmooth_setDest(env, evt.velocity / 127.0f);
             }
             else
@@ -148,7 +148,7 @@ void Synth_Task(void *argument)
                 tSVF_setFreq(filter, cutoff);
 
                 /* Oscillator → envelope → filter → effects */
-                float osc_out  = tPBTriangle_tick(osc) * env_out;
+                float osc_out  = tCycle_tick(osc) * env_out;
                 float filtered = tSVF_tickLP(filter, osc_out);
                 float sample   = Effects_Process(filtered);
 

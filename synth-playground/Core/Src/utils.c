@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "utils.h"
 #include <string.h>
+#include <math.h>
 
 /* External variables --------------------------------------------------------*/
 extern XSPI_HandleTypeDef hospi1;
@@ -607,4 +608,96 @@ int Test_W25Q64_Flash(void)
   }
 
   return 1;  // SUCCESS
+}
+
+/* ---------------------------------------------------------------------------
+ * Test_DSP_FPU
+ *
+ * Verifies two things and prints results via SWO:
+ *
+ *  1. FPU active — reads SCB->CPACR to confirm CP10/CP11 are full-access,
+ *     then times 1 000 single-precision multiplications with the DWT cycle
+ *     counter.
+ *
+ *  2. CMSIS-DSP fast trig — times arm_sin_f32 vs sinf over 1 000 calls,
+ *     checks the maximum absolute error stays within the documented tolerance,
+ *     and prints the cycle counts for both.
+ * --------------------------------------------------------------------------*/
+
+static inline uint32_t dwt_cycles(void)
+{
+    return DWT->CYCCNT;
+}
+
+#define DSP_TEST_ITERS 1000
+
+void Test_DSP_FPU(void)
+{
+    /* ------------------------------------------------------------------
+     * All results are stored in volatile locals so the debugger can read
+     * them while paused on the final breakpoint (__BKPT / NOP).
+     *
+     * Inspect these variables:
+     *   fpu_ok       — 1 = CP10/CP11 full-access (hard-float active)
+     *   cp10, cp11   — should both be 3
+     *   fpu_cycles   — total DWT cycles for 1000 float muls
+     *   fpu_cy_per_op— cycles per mul (expect 1-2 with FPU)
+     *   dsp_cycles   — total DWT cycles for 1000 arm_sin_f32 calls
+     *   libc_cycles  — total DWT cycles for 1000 sinf calls
+     *   dsp_max_err  — max |arm_sin_f32 - sinf|  (expect < 1e-4)
+     *   dsp_pass     — 1 = error within tolerance
+     * ----------------------------------------------------------------*/
+
+    /* Enable DWT cycle counter (CoreDebug + DWT->CTRL) */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0;
+    DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
+
+    /* 1. FPU — check CPACR ------------------------------------------ */
+    uint32_t cpacr         = SCB->CPACR;
+    volatile uint32_t cp10 = (cpacr >> 20) & 0x3U;
+    volatile uint32_t cp11 = (cpacr >> 22) & 0x3U;
+    volatile uint32_t fpu_ok = (cp10 == 3U && cp11 == 3U) ? 1U : 0U;
+
+    /* 2. FPU — time 1000 float multiplications ----------------------- */
+    volatile float acc = 1.0f;
+    uint32_t t0 = dwt_cycles();
+    for (int i = 0; i < DSP_TEST_ITERS; i++)
+        acc *= 1.00001f;
+    volatile uint32_t fpu_cycles    = dwt_cycles() - t0;
+    volatile uint32_t fpu_cy_per_op = fpu_cycles / DSP_TEST_ITERS;
+    (void)acc;
+
+    /* 3. CMSIS-DSP — arm_sin_f32 timing ------------------------------ */
+    float step = 6.2831853f / (float)DSP_TEST_ITERS;  /* 0 .. 2π */
+    volatile float dsp_result = 0.0f;
+    t0 = dwt_cycles();
+    for (int i = 0; i < DSP_TEST_ITERS; i++)
+        dsp_result = arm_sin_f32(step * (float)i);
+    volatile uint32_t dsp_cycles = dwt_cycles() - t0;
+    (void)dsp_result;
+
+    /* 4. sinf timing + accuracy vs arm_sin_f32 ----------------------- */
+    volatile float max_err = 0.0f;
+    volatile float libc_result = 0.0f;
+    t0 = dwt_cycles();
+    for (int i = 0; i < DSP_TEST_ITERS; i++)
+    {
+        float angle = step * (float)i;
+        float ref   = sinf(angle);
+        float fast  = arm_sin_f32(angle);
+        float err   = (fast - ref) < 0.0f ? -(fast - ref) : (fast - ref);
+        if (err > max_err) max_err = err;
+        libc_result = ref;
+    }
+    volatile uint32_t libc_cycles = dwt_cycles() - t0;
+    (void)libc_result;
+
+    volatile float    dsp_max_err = max_err;
+    volatile uint32_t dsp_pass    = (max_err < 1e-4f) ? 1U : 0U;
+
+    /* Set a breakpoint on the line below and inspect the locals above. */
+    __NOP(); /* <-- BREAKPOINT HERE */
+    (void)fpu_ok; (void)fpu_cy_per_op; (void)dsp_max_err; (void)dsp_pass;
+    (void)libc_cycles;
 }

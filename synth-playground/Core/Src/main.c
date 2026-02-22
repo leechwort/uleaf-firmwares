@@ -114,6 +114,9 @@ int main(void)
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
 
+  // Verify FPU (CPACR) and CMSIS-DSP fast trig are working
+  Test_DSP_FPU();
+
   // Test PSRAM connection at startup
   int psram_result = Test_PSRAM_Connection();
   if (psram_result < 0) {

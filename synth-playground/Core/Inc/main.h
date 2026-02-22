@@ -31,7 +31,12 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+/* CMSIS-DSP — target core and feature flags must be set before arm_math.h */
+#define ARM_MATH_CM33
+#define ARM_MATH_DSP
+#define ARM_MATH_LOOPUNROLL
+#include "arm_math.h"       /* full CMSIS-DSP API                    */
+#include "dsp/fast_math_functions.h"  /* arm_sin_f32, arm_cos_f32, arm_atan2_f32 */
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/

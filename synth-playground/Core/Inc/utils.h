@@ -88,6 +88,7 @@ int Test_PSRAM_MemoryMapped(void);
 int Test_PSRAM_Speed(uint32_t *writeSpeedKBps, uint32_t *readSpeedKBps);
 int PSRAM_MemoryMapped_Init(void);
 int Test_W25Q64_Flash(void);
+void Test_DSP_FPU(void);
 
 #ifdef __cplusplus
 }
