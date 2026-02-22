@@ -18,12 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "app_freertos.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "utils.h"
-#include "leaf.h"
-#include <math.h>
+#include "synth_core.h"
+#include "sequencer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -53,37 +54,33 @@ XSPI_HandleTypeDef hospi1;
 SPI_HandleTypeDef hspi2;
 
 /* USER CODE BEGIN PV */
-
-// LEAF Constants
-#define SAMPLERATE 44000
-#define LEAF_BUFFER_SIZE (2 * 44000)
-#define DMA_BUFFER_SIZE 8192  // Total DMA buffer size (must be even)
-
-// LEAF Memory pool
-char mempool[10000];
-
-// Double buffer for DMA - stereo 16-bit samples
-uint16_t dma_buffer[DMA_BUFFER_SIZE] = {0};
-
-// Buffer management for double-buffering
-volatile uint16_t *current_write_ptr = dma_buffer;
-volatile size_t current_sample_count = 0;
-volatile uint32_t buffer_overrun_count = 0;
-volatile uint8_t need_samples = 0;  // Flag: 0=none, 1=fill first half, 2=fill second half
-volatile uint32_t half_complete_count = 0;  // Increments on half-complete callback
-volatile uint32_t full_complete_count = 0;  // Increments on full-complete callback
-volatile uint32_t buffers_filled_count = 0; // Increments each time we fill a buffer half
-
-// LEAF objects (use pointers because LEAF init functions take double pointers)
-LEAF leaf;
-tCycle* cycle;
-tHermiteDelay* delay;
-
+/* Example 8-step sequence (A minor pentatonic)
+ * note: MIDI number  velocity: 80  gate_ms: note held  step_ms: step length
+ * Set note=0 or velocity=0 for a rest. */
+static const SequenceStep s_sequence[] = {
+    /* note  vel  gate_ms  step_ms */
+    {  54,   80,   180,     230  },   /* F#3  ~185.0 Hz */
+    {  62,   80,   180,     230  },   /* D4   ~293.7 Hz */
+    {  57,   80,   180,     230  },   /* A3   ~220.0 Hz */
+    {  64,   80,   180,     230  },   /* E4   ~329.6 Hz */
+    {   0,    0,     0,     230  },   /* rest */
+    {  62,   80,   180,     230  },   /* D4   ~293.7 Hz */
+    {  61,   80,   180,     230  },   /* C#4  ~277.2 Hz */
+    {  59,   80,   180,     230  },   /* B3   ~246.9 Hz */
+    {  61,   80,   180,     230  },   /* C#4  ~277.2 Hz */
+    {  62,   80,   180,     230  },   /* D4   ~293.7 Hz */
+    {  58,   80,   180,     230  },   /* A#3  ~233.1 Hz */
+    {  62,   80,   180,     230  },   /* D4   ~293.7 Hz */
+    {  64,   80,   180,     230  },   /* E4   ~329.6 Hz */
+    {  62,   80,   180,     230  },   /* D4   ~293.7 Hz */
+    {  65,   80,   180,     230  },   /* F4   ~349.2 Hz */
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 void PeriphCommonClock_Config(void);
+void MX_FREERTOS_Init(void);
 static void MX_GPIO_Init(void);
 static void MX_GPDMA1_Init(void);
 static void MX_ICACHE_Init(void);
@@ -96,42 +93,6 @@ static void MX_SPI2_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-// Random number generator for LEAF
-float rnd_func()
-{
-    return ((float)rand() / (float)(RAND_MAX));
-}
-
-// DMA Half Transfer Complete Callback - first half sent, fill it
-void I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
-{
-  half_complete_count++;  // Debug counter
-  // DMA is now playing second half, we need to fill first half
-  if (need_samples == 0)
-  {
-    need_samples = 1;  // Request first half fill
-  }
-  else
-  {
-    buffer_overrun_count++;  // Previous fill not complete
-  }
-}
-
-// DMA Transfer Complete Callback - second half sent, fill it
-void I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
-{
-  full_complete_count++;  // Debug counter
-  // DMA is now playing first half, we need to fill second half
-  if (need_samples == 0)
-  {
-    need_samples = 2;  // Request second half fill
-  }
-  else
-  {
-    buffer_overrun_count++;  // Previous fill not complete
-  }
-}
 
 /* USER CODE END 0 */
 
@@ -183,89 +144,48 @@ int main(void)
   }
 
   // Initialize LEAF audio library
-  LEAF_init(&leaf, SAMPLERATE, mempool, LEAF_BUFFER_SIZE, &rnd_func);
-  
-  // Initialize a sine oscillator (tCycle) - Note: LEAF uses double pointers for init
-  tCycle_init(&cycle, &leaf);
-  tCycle_setFreq(cycle, 220.0f);  // 220Hz = A3 note
-  
-  // Initialize a delay effect (optional)
-  tHermiteDelay_init(&delay, 2000, 2500, &leaf);
-  tHermiteDelay_setDelay(delay, 2000.0f);  // 2000 samples delay
-  tHermiteDelay_setGain(delay, 0.5f);      // 50% wet/dry mix
+  Synth_Init();
 
   /* USER CODE END 2 */
 
+  /* Init scheduler */
+  osKernelInitialize();
+  /* Call init function for freertos objects (in app_freertos.c) */
+  MX_FREERTOS_Init();
+
+  /* Create the Synth Task */
+  const osThreadAttr_t synthTask_attributes = {
+    .name = "synthTask",
+    .priority = (osPriority_t) osPriorityHigh, // Audio needs high priority
+    .stack_size = 1024 * 4 // 4KB stack for LEAF processing
+  };
+  osThreadNew(Synth_Task, NULL, &synthTask_attributes);
+
+  /* Initialise and create the Sequencer Task */
+  Sequencer_Init(s_sequence,
+                 sizeof(s_sequence) / sizeof(s_sequence[0]),
+                 1 /* loop */);
+  const osThreadAttr_t seqTask_attributes = {
+    .name       = "seqTask",
+    .priority   = (osPriority_t) osPriorityNormal,
+    .stack_size = 512
+  };
+  osThreadNew(Sequencer_Task, NULL, &seqTask_attributes);
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  
-  // Unmute PCM5102A
-  HAL_GPIO_WritePin(AUDIO_MUTE_CONTROL_GPIO_Port, AUDIO_MUTE_CONTROL_Pin, GPIO_PIN_SET);
-  HAL_Delay(10);
-  
-  // Register both I2S callbacks for double-buffering
-  HAL_I2S_RegisterCallback(&hi2s1, HAL_I2S_TX_COMPLETE_CB_ID, I2S_TxCpltCallback);
-  HAL_I2S_RegisterCallback(&hi2s1, HAL_I2S_TX_HALF_COMPLETE_CB_ID, I2S_TxHalfCpltCallback);
-  
-  // Pre-fill ENTIRE buffer before starting DMA
-  for (uint32_t i = 0; i < DMA_BUFFER_SIZE / 2; i++)
-  {
-    float sample = tCycle_tick(cycle);
-    int16_t sample_int = (int16_t)(sample * 32767.0f * 0.25f);
-    dma_buffer[i * 2] = sample_int;
-    dma_buffer[i * 2 + 1] = sample_int;
-  }
-  
-  // Start I2S DMA transmission with pre-filled buffer
-  HAL_StatusTypeDef i2s_status = HAL_I2S_Transmit_DMA(&hi2s1, dma_buffer, DMA_BUFFER_SIZE);
-  if (i2s_status != HAL_OK) {
-    Error_Handler();
-  }
-  
-  uint32_t counter = 0;
   
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    
-    // Check if a buffer half needs filling
-    if (need_samples != 0)
-    {
-      uint8_t buffer_to_fill = need_samples;
-      need_samples = 0;  // Clear flag immediately
-      
-      // Set write pointer to appropriate buffer half
-      uint16_t* write_ptr;
-      if (buffer_to_fill == 1)
-      {
-        write_ptr = dma_buffer;  // Fill first half
-      }
-      else
-      {
-        write_ptr = dma_buffer + DMA_BUFFER_SIZE / 2;  // Fill second half
-      }
-      
-      // Generate samples for this half
-      // Each half = DMA_BUFFER_SIZE/2 = 4096 uint16_t values = 2048 stereo frames
-      uint32_t num_frames = DMA_BUFFER_SIZE / 4;  // 2048 stereo frames per half
-      
-      for (uint32_t frame = 0; frame < num_frames; frame++)
-      {
-        // Generate one mono sample from LEAF oscillator
-        float sample = tCycle_tick(cycle);
-        
-        // Convert to 16-bit signed integer
-        int16_t sample_int = (int16_t)(sample * 32767.0f * 0.25f);
-        
-        // Write stereo frame (duplicate mono to L/R)
-        write_ptr[frame * 2 + 0] = (uint16_t)sample_int;  // Left
-        write_ptr[frame * 2 + 1] = (uint16_t)sample_int;  // Right
-      }
-      
-      buffers_filled_count++;  // Debug counter - increment after filling
-    }
+    osDelay(1000);
   }
   /* USER CODE END 3 */
 }
@@ -363,7 +283,7 @@ static void MX_GPDMA1_Init(void)
   __HAL_RCC_GPDMA1_CLK_ENABLE();
 
   /* GPDMA1 interrupt Init */
-    HAL_NVIC_SetPriority(GPDMA1_Channel5_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(GPDMA1_Channel5_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(GPDMA1_Channel5_IRQn);
 
   /* USER CODE BEGIN GPDMA1_Init 1 */
@@ -568,6 +488,28 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM1 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM1)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
