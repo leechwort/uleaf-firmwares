@@ -22,10 +22,10 @@
 static char mempool[LEAF_MEMPOOL_SIZE];
 LEAF leaf;
 
-static tCycle  *osc;
+static tPBSaw        *osc;
 static tTriLFO *lfo;
-static tSVF        *filter;
-static tExpSmooth  *env;
+static tSVF          *filter;
+static tHybridADSR   *env;
 
 static float rnd_func(void)
 {
@@ -76,18 +76,17 @@ void Synth_Init(void)
 {
     LEAF_init(&leaf, SAMPLERATE, mempool, LEAF_MEMPOOL_SIZE, &rnd_func);
 
-    tCycle_init(&osc, &leaf);
-    tCycle_setFreq(osc, 440.0f);
+    tPBSaw_init(&osc, &leaf);
+    tPBSaw_setFreq(osc, 440.0f);
 
     tTriLFO_init(&lfo, &leaf);
     tTriLFO_setFreq(lfo, 0.5f);
 
     tSVF_init(&filter, SVFTypeLowpass, 400.0f, 3.0f, &leaf);
 
-    /* Exponential gate smoother: factor ~0.007 ≈ 3 ms at 44 kHz
-     * tExpSmooth smooths from current value toward the destination each tick.
-     * Use tExpSmooth_setFactor() to change the attack/release speed. */
-    tExpSmooth_init(&env, 0.0f, 0.007f, &leaf);
+    /* HybridADSR: linear attack, exponential decay/release, no lookup tables.
+     * Args: attack ms, decay ms, sustain level, release ms */
+    tHybridADSR_init(&env, 5.0f, 80.0f, 0.7f, 150.0f, &leaf);
 
     Effects_Init();
 
@@ -119,12 +118,12 @@ void Synth_Task(void *argument)
         {
             if (evt.velocity > 0 && evt.frequency > 0.0f)
             {
-                tCycle_setFreq(osc, evt.frequency);
-                tExpSmooth_setDest(env, evt.velocity / 127.0f);
+                tPBSaw_setFreq(osc, evt.frequency);
+                tHybridADSR_on(env, evt.velocity / 127.0f);
             }
             else
             {
-                tExpSmooth_setDest(env, 0.0f);
+                tHybridADSR_off(env);
             }
         }
 
@@ -139,8 +138,8 @@ void Synth_Task(void *argument)
 
             for (uint32_t f = 0; f < num_frames; f++)
             {
-                /* Gate envelope – exponential smooth toward target amplitude */
-                float env_out = tExpSmooth_tick(env);
+                /* HybridADSR envelope output */
+                float env_out = tHybridADSR_tick(env);
 
                 /* LFO → filter cutoff sweep (100–8000 Hz) */
                 float lfo_val = tTriLFO_tick(lfo);
@@ -148,7 +147,7 @@ void Synth_Task(void *argument)
                 tSVF_setFreq(filter, cutoff);
 
                 /* Oscillator → envelope → filter → effects */
-                float osc_out  = tCycle_tick(osc) * env_out;
+                float osc_out  = tPBSaw_tick(osc) * env_out;
                 float filtered = tSVF_tickLP(filter, osc_out);
                 float sample   = Effects_Process(filtered);
 
