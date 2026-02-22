@@ -54,22 +54,6 @@ XSPI_HandleTypeDef hospi1;
 SPI_HandleTypeDef hspi2;
 
 /* USER CODE BEGIN PV */
-/* Example 8-step sequence (A minor pentatonic)
- * note: MIDI number  velocity: 80  gate_ms: note held  step_ms: step length
- * Set note=0 or velocity=0 for a rest. */
-static const SequenceStep s_sequence[] = {
-    /* note  vel  gate_ms  step_ms */
-    {  62,   80,   180,     230  },   /* D4   ~293.7 Hz */
-    {  55,   80,   180,     230  },   /* G3   ~196.0 Hz */
-    {  57,   80,   180,     230  },   /* A3   ~220.0 Hz */
-    {  59,   80,   180,     230  },   /* B3   ~246.9 Hz */
-    {   0,    0,     0,     230  },   /* rest */
-    {  57,   80,   180,     230  },   /* A3   ~220.0 Hz */
-    {   0,    0,     0,     230  },   /* rest */
-    {  65,   80,   180,     230  },   /* F4   ~349.2 Hz */
-    {  62,   80,   180,     230  },   /* D4   ~293.7 Hz */
-    {   0,    0,     0,     230  },   /* rest */
-};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -139,7 +123,6 @@ int main(void)
   }
 
   // Initialize PSRAM in memory-mapped mode.
-  // Required when DELAY_USE_PSRAM=1 in synth_core.c; harmless otherwise.
   if (PSRAM_MemoryMapped_Init() != 1) {
     Error_Handler();
   }
@@ -163,9 +146,7 @@ int main(void)
   osThreadNew(Synth_Task, NULL, &synthTask_attributes);
 
   /* Initialise and create the Sequencer Task */
-  Sequencer_Init(s_sequence,
-                 sizeof(s_sequence) / sizeof(s_sequence[0]),
-                 1 /* loop */);
+  Sequencer_Init();
   const osThreadAttr_t seqTask_attributes = {
     .name       = "seqTask",
     .priority   = (osPriority_t) osPriorityNormal,

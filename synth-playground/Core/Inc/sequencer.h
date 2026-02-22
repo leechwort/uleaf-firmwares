@@ -1,8 +1,9 @@
 /* sequencer.h ---------------------------------------------------------------
  * Step sequencer module.
  *
- * Defines a fixed note sequence and posts NoteEvent messages to synth_core
- * via a FreeRTOS message queue.  The sequencer runs in its own RTOS task.
+ * The note sequence is defined internally in sequencer.c.
+ * Posts NoteEvent messages to synth_core via a FreeRTOS message queue.
+ * The sequencer runs in its own RTOS task.
  * ---------------------------------------------------------------------------*/
 #ifndef SEQUENCER_H
 #define SEQUENCER_H
@@ -12,7 +13,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
-#include <math.h>    /* powf – required by MIDI_NOTE_TO_HZ */
+#include <math.h>
 #include "cmsis_os2.h"
 
 /* ---------------------------------------------------------------------------
@@ -35,15 +36,15 @@ typedef struct {
  * SequenceStep – one step in the sequence definition
  * --------------------------------------------------------------------------*/
 typedef struct {
-    uint8_t  note;            /* MIDI note number; 0 = rest            */
-    uint8_t  velocity;        /* 0 = rest / silent                     */
-    uint32_t gate_ms;         /* how long the note is on  (ms)         */
-    uint32_t step_ms;         /* total step duration (gate + gap)  (ms)*/
+    uint8_t  note;        /* MIDI note number; 0 = rest            */
+    uint8_t  velocity;    /* 0 = rest / silent                     */
+    uint32_t gate_ms;     /* how long the note is on  (ms)         */
+    uint32_t step_ms;     /* total step duration (gate + gap)  (ms)*/
 } SequenceStep;
 
 /* ---------------------------------------------------------------------------
- * Queue handle – created by Synth_Init, read by Synth_Task,
- *               written by Sequencer_Task.
+ * Queue handle – created by Synth_Init(), read by Synth_Task(),
+ *               written by Sequencer_Task().
  * --------------------------------------------------------------------------*/
 extern osMessageQueueId_t g_note_queue;
 
@@ -53,13 +54,9 @@ extern osMessageQueueId_t g_note_queue;
 
 /**
  * @brief  Initialise the sequencer (call before osKernelStart).
- *         Stores the sequence to play; does NOT create the task.
- *
- * @param  steps    Pointer to an array of SequenceStep.
- * @param  length   Number of steps in the array.
- * @param  loop     Non-zero to loop endlessly, 0 to play once.
+ *         The sequence is defined inside sequencer.c.
  */
-void Sequencer_Init(const SequenceStep *steps, uint32_t length, uint8_t loop);
+void Sequencer_Init(void);
 
 /**
  * @brief  FreeRTOS task function for the sequencer.
