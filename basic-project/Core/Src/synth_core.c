@@ -3,7 +3,30 @@
 #include "leaf.h"
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include "cmsis_os2.h"
+
+// ---------------------------------------------------------------------------
+// Circular delay line in SRAM
+// 500 ms at 44 kHz = 22 000 floats = 88 KB  (H533 has 640 KB SRAM total)
+// ---------------------------------------------------------------------------
+#define DLY_SAMPLES   22000
+#define DLY_FEEDBACK  0.60f
+#define DLY_MIX       0.55f
+
+static float    dly_buf[DLY_SAMPLES];  // ring buffer in SRAM (.bss)
+static uint32_t dly_write = 0;
+
+static inline float delay_process(float in)
+{
+    // At the start of each call, dly_write points to the OLDEST sample
+    // (it was written DLY_SAMPLES iterations ago and hasn't been touched since)
+    float out = dly_buf[dly_write];
+    dly_buf[dly_write] = in + out * DLY_FEEDBACK;
+    if (++dly_write >= DLY_SAMPLES)
+        dly_write = 0;
+    return out;
+}
 
 /* Queue shared with the sequencer – holds up to 8 pending NoteEvents */
 osMessageQueueId_t g_note_queue = NULL;
@@ -17,7 +40,7 @@ extern I2S_HandleTypeDef hi2s1;
 #define DMA_BUFFER_SIZE 8192  // Total DMA buffer size (must be even)
 
 // LEAF Memory pool
-char mempool[10000];
+char mempool[30000];
 
 // Double buffer for DMA - stereo 16-bit samples
 uint16_t dma_buffer[DMA_BUFFER_SIZE] = {0};
@@ -33,8 +56,10 @@ volatile uint32_t buffers_filled_count = 0; // Increments each time we fill a bu
 
 // LEAF objects
 LEAF leaf;
-tCycle* cycle;
-tHermiteDelay* delay;
+tPBTriangle* osc;
+tTriLFO*     lfo;
+tSVF*        filter;
+// tDelay*   dly;  -- replaced by PSRAM delay line
 
 // Gate envelope smoother – avoids clicks on note on/off
 // synth_gate_target: 1.0 = on, 0.0 = off  (written by NoteEvent handler)
@@ -86,11 +111,22 @@ void Synth_Init(void)
   // Initialize LEAF audio library
   LEAF_init(&leaf, SAMPLERATE, mempool, LEAF_BUFFER_SIZE, &rnd_func);
   
-  // Initialize a sine oscillator (tCycle)
-  tCycle_init(&cycle, &leaf);
-  tCycle_setFreq(cycle, 440.0f);  // will be overridden by first NoteEvent
-  synth_gate_target = 0.0f;       // silent until sequencer sends a note-on
+  // Initialize a polyblep triangle oscillator
+  tPBTriangle_init(&osc, &leaf);
+  tPBTriangle_setFreq(osc, 440.0f);   // default pitch, overridden by sequencer
+  synth_gate_target = 0.0f;           // silent until sequencer sends a note-on
   synth_gate_smooth  = 0.0f;
+
+  // Triangle LFO – 0.5 Hz → 2-second full sweep
+  tTriLFO_init(&lfo, &leaf);
+  tTriLFO_setFreq(lfo, 0.5f);
+
+  // State-variable lowpass filter – Q=3.0 gives a strong resonant peak
+  tSVF_init(&filter, SVFTypeLowpass, 400.0f, 3.0f, &leaf);
+
+  // Clear delay buffer
+  memset(dly_buf, 0, sizeof(dly_buf));
+  dly_write = 0;
 
   // Unmute PCM5102A
   HAL_GPIO_WritePin(AUDIO_MUTE_CONTROL_GPIO_Port, AUDIO_MUTE_CONTROL_Pin, GPIO_PIN_SET);
@@ -103,7 +139,7 @@ void Synth_Init(void)
   // Pre-fill buffer with silence before starting DMA
   for (uint32_t i = 0; i < DMA_BUFFER_SIZE / 2; i++)
   {
-    tCycle_tick(cycle);  // advance oscillator phase, discard output
+    tPBTriangle_tick(osc);  // advance oscillator phase, discard output
     dma_buffer[i * 2]     = 0;
     dma_buffer[i * 2 + 1] = 0;
   }
@@ -128,8 +164,8 @@ void Synth_Task(void *argument)
     {
       if (evt.velocity > 0 && evt.frequency > 0.0f)
       {
-        // Note ON: retune the oscillator and open gate
-        tCycle_setFreq(cycle, evt.frequency);
+        // Note ON: set pitch and open gate
+        tPBTriangle_setFreq(osc, evt.frequency);
         synth_gate_target = 1.0f;
       }
       else
@@ -165,8 +201,18 @@ void Synth_Task(void *argument)
         // Smooth the gate toward its target (eliminates clicks)
         synth_gate_smooth += GATE_COEFF * (synth_gate_target - synth_gate_smooth);
 
-        // Generate one mono sample from LEAF oscillator, gated
-        float sample = tCycle_tick(cycle) * synth_gate_smooth;
+        // LFO sweeps filter cutoff between 100 Hz and 8000 Hz
+        float lfo_val = tTriLFO_tick(lfo);                   // -1 .. +1
+        float cutoff  = 4050.0f + lfo_val * 3950.0f;        // 100 .. 8000 Hz
+        tSVF_setFreq(filter, cutoff);                        // takes Hz directly
+
+        // Gate only the oscillator; delay tail must ring freely after note-off
+        float osc_out  = tPBTriangle_tick(osc) * synth_gate_smooth;
+        float filtered = tSVF_tickLP(filter, osc_out);
+
+        // Delay: dry goes in gated, echo output is always mixed regardless of gate
+        float echo   = delay_process(filtered);
+        float sample = filtered + echo * DLY_MIX;
         
         // Convert to 16-bit signed integer
         int16_t sample_int = (int16_t)(sample * 32767.0f * 0.25f);
