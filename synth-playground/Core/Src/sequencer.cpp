@@ -6,11 +6,6 @@
  * to the synth core via the g_note_queue FreeRTOS message queue.
  * ---------------------------------------------------------------------------*/
 
-/* Force Tier 3 before any Gingoduino header (gives Sequence + Event) */
-#define GINGODUINO_TIER 3
-/* Limit event capacity to what we actually use — shrinks GingoSequence from ~6KB to ~1.5KB */
-#define GINGODUINO_MAX_EVENTS 16
-
 #include "sequencer.h"
 
 /* Gingoduino */
@@ -23,9 +18,9 @@
 using namespace gingoduino;
 
 /* ---------------------------------------------------------------------------
-/* Static-storage Gingoduino objects — NOT on the task stack.
+ * Static-storage Gingoduino objects — NOT on the task stack.
  * Initialized lazily inside Sequencer_Task to avoid static-init-order issues.
- * GingoSequence with 16 events ≈ 1.6 KB; safe in BSS/data. */
+ * GingoSequence with GINGODUINO_MAX_EVENTS events; safe in BSS/data. */
 static uint8_t        s_seq_buf[sizeof(GingoSequence)];
 static GingoSequence* s_seq = nullptr;
 
@@ -41,16 +36,11 @@ static void build_sequence(GingoSequence& seq)
     const GingoDuration eighth("eighth");
 
     /* A small melodic motif in D minor */
-    seq.add(GingoEvent::noteEvent(GingoNote("D"),  quarter, 4, 80));
-    seq.add(GingoEvent::noteEvent(GingoNote("G"),  quarter, 3, 80));
-    seq.add(GingoEvent::noteEvent(GingoNote("A"),  quarter, 3, 80));
+    seq.add(GingoEvent::noteEvent(GingoNote("A"),  quarter, 4, 80));
     seq.add(GingoEvent::noteEvent(GingoNote("B"),  quarter, 3, 80));
-    seq.add(GingoEvent::rest(quarter));
-    seq.add(GingoEvent::noteEvent(GingoNote("A"),  quarter, 3, 80));
-    seq.add(GingoEvent::rest(eighth));
-    seq.add(GingoEvent::noteEvent(GingoNote("F"),  quarter, 4, 80));
-    seq.add(GingoEvent::noteEvent(GingoNote("D"),  quarter, 4, 80));
-    seq.add(GingoEvent::rest(quarter));
+    seq.add(GingoEvent::noteEvent(GingoNote("C"),  quarter, 3, 80));
+    seq.add(GingoEvent::noteEvent(GingoNote("D"),  quarter, 3, 80));
+    seq.add(GingoEvent::noteEvent(GingoNote("E"),  quarter, 3, 80));
 }
 
 /* ---------------------------------------------------------------------------
