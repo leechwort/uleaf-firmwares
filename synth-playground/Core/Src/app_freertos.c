@@ -61,8 +61,8 @@ const osThreadAttr_t synthTask_attributes = {
 osThreadId_t seqTaskHandle;
 const osThreadAttr_t seqTask_attributes = {
   .name = "seqTask",
-  .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 256 * 4
+  .priority = (osPriority_t) osPriorityAboveNormal,
+  .stack_size = 512 * 4
 };
 /* USER CODE END Variables */
 

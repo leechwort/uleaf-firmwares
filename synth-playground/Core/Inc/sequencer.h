@@ -1,67 +1,36 @@
 /* sequencer.h ---------------------------------------------------------------
  * Step sequencer module.
  *
- * The note sequence is defined internally in sequencer.c.
+ * The note sequence is defined internally in sequencer.cpp using Gingoduino.
  * Posts NoteEvent messages to synth_core via a FreeRTOS message queue.
  * The sequencer runs in its own RTOS task.
  * ---------------------------------------------------------------------------*/
 #ifndef SEQUENCER_H
 #define SEQUENCER_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stdint.h>
-#include <math.h>
 #include "cmsis_os2.h"
 
 /* ---------------------------------------------------------------------------
- * Note / pitch helpers
- * MIDI note 69 = A4 = 440 Hz
- * f = 440 * 2^((note - 69) / 12)
- * --------------------------------------------------------------------------*/
-#define MIDI_NOTE_TO_HZ(n) (440.0f * powf(2.0f, ((float)(n) - 69.0f) / 12.0f))
-
-/* ---------------------------------------------------------------------------
- * NoteEvent – sent from sequencer to synth core
+ * NoteEvent – sent from sequencer to synth core.
+ * Plain C struct so synth_core.c (compiled as C) can use it directly.
  * --------------------------------------------------------------------------*/
 typedef struct {
     uint8_t  note;        /* MIDI note number  (0 = rest / note-off) */
     uint8_t  velocity;    /* 0 = note-off, 1-127 = note-on            */
-    float    frequency;   /* Hz, pre-computed from note               */
+    float    frequency;   /* Hz, computed by Gingoduino               */
 } NoteEvent;
 
 /* ---------------------------------------------------------------------------
- * SequenceStep – one step in the sequence definition
+ * Queue handle – created by Synth_Task(), written by Sequencer_Task().
  * --------------------------------------------------------------------------*/
-typedef struct {
-    uint8_t  note;        /* MIDI note number; 0 = rest            */
-    uint8_t  velocity;    /* 0 = rest / silent                     */
-    uint32_t gate_ms;     /* how long the note is on  (ms)         */
-    uint32_t step_ms;     /* total step duration (gate + gap)  (ms)*/
-} SequenceStep;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-/* ---------------------------------------------------------------------------
- * Queue handle – created by Synth_Init(), read by Synth_Task(),
- *               written by Sequencer_Task().
- * --------------------------------------------------------------------------*/
 extern osMessageQueueId_t g_note_queue;
 
-/* ---------------------------------------------------------------------------
- * Public API
- * --------------------------------------------------------------------------*/
-
-/**
- * @brief  Initialise the sequencer (call before osKernelStart).
- *         The sequence is defined inside sequencer.c.
- */
 void Sequencer_Init(void);
-
-/**
- * @brief  FreeRTOS task function for the sequencer.
- *         Pass to osThreadNew().
- */
 void Sequencer_Task(void *argument);
 
 #ifdef __cplusplus

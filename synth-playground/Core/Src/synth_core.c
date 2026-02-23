@@ -112,9 +112,9 @@ void Synth_Task(void *argument)
 
     while (1)
     {
-        /* --- Consume pending NoteEvents ----------------------------------- */
+        /* --- Consume ONE pending NoteEvent per loop iteration ------------ */
         NoteEvent evt;
-        while (osMessageQueueGet(g_note_queue, &evt, NULL, 0U) == osOK)
+        if (osMessageQueueGet(g_note_queue, &evt, NULL, 0U) == osOK)
         {
             if (evt.velocity > 0 && evt.frequency > 0.0f)
             {
@@ -158,9 +158,10 @@ void Synth_Task(void *argument)
 
             buffers_filled_count++;
         }
-        else
-        {
-            osDelay(1);
-        }
+
+        /* Yield so equal-priority tasks (sequencer) get CPU time.
+         * osDelay(1) blocks for one tick (1ms) — audio half-buffer is ~46ms
+         * at 44kHz / 8192 samples, so this adds no audible latency. */
+        osDelay(1);
     }
 }
