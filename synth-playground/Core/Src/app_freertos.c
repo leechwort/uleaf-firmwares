@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "synth_core.h"
+#include "sequencer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,9 +42,6 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-/* USER CODE BEGIN Variables */
-
-/* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
@@ -51,6 +49,22 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
   .stack_size = 128 * 4
 };
+
+/* USER CODE BEGIN Variables */
+osThreadId_t synthTaskHandle;
+const osThreadAttr_t synthTask_attributes = {
+  .name = "synthTask",
+  .priority = (osPriority_t) osPriorityAboveNormal,
+  .stack_size = 1024 * 4
+};
+
+osThreadId_t seqTaskHandle;
+const osThreadAttr_t seqTask_attributes = {
+  .name = "seqTask",
+  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = 256 * 4
+};
+/* USER CODE END Variables */
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -86,7 +100,8 @@ void MX_FREERTOS_Init(void) {
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  synthTaskHandle = osThreadNew(Synth_Task, NULL, &synthTask_attributes);
+  seqTaskHandle   = osThreadNew(Sequencer_Task, NULL, &seqTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

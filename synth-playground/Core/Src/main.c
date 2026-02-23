@@ -18,7 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "app_freertos.h"
+#include "cmsis_os2.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -132,6 +132,7 @@ int main(void)
 
   // Initialize LEAF audio library
   Synth_Init();
+  Sequencer_Init();
 
   /* USER CODE END 2 */
 
@@ -139,23 +140,6 @@ int main(void)
   osKernelInitialize();
   /* Call init function for freertos objects (in app_freertos.c) */
   MX_FREERTOS_Init();
-
-  /* Create the Synth Task */
-  const osThreadAttr_t synthTask_attributes = {
-    .name = "synthTask",
-    .priority = (osPriority_t) osPriorityHigh, // Audio needs high priority
-    .stack_size = 1024 * 4 // 4KB stack for LEAF processing
-  };
-  osThreadNew(Synth_Task, NULL, &synthTask_attributes);
-
-  /* Initialise and create the Sequencer Task */
-  Sequencer_Init();
-  const osThreadAttr_t seqTask_attributes = {
-    .name       = "seqTask",
-    .priority   = (osPriority_t) osPriorityNormal,
-    .stack_size = 512
-  };
-  osThreadNew(Sequencer_Task, NULL, &seqTask_attributes);
 
   /* Start scheduler */
   osKernelStart();
